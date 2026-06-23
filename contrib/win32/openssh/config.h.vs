@@ -1773,6 +1773,10 @@
 #define HAVE_EVP_PKEY_GET0_RSA 1
 #define HAVE_EVP_MD_CTX_NEW 1
 #define HAVE_EVP_MD_CTX_FREE 1
+/* LibreSSL 4.2.0 provides these; needed for static link to avoid openbsd-compat
+   duplicate-symbol clashes (L:-local static build). */
+#define HAVE_EVP_DIGESTSIGN 1
+#define HAVE_EVP_DIGESTVERIFY 1
 
 /* Definition to enable sntrup761-x25519 */
 #define USE_SNTRUP761X25519 1

@@ -1,0 +1,12 @@
+<Project>
+  <!-- LOCAL BUILD ONLY (not committed): make every project in this solution
+       resolve the vcpkg-installed openssl/zlib/fido2 headers and import libs,
+       since the vcpkg MSBuild integration is disabled in this manual build and
+       openbsd_compat.vcxproj does not list the vcpkg include path itself.
+       Imported late, so prepending IncludePath/LibraryPath sticks. -->
+  <PropertyGroup>
+    <_VcpkgRoot>$(MSBuildThisFileDirectory)vcpkg_installed\x64-custom\x64-custom</_VcpkgRoot>
+    <IncludePath>$(_VcpkgRoot)\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(_VcpkgRoot)\lib;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+</Project>
