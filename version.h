@@ -7,5 +7,5 @@
 #define SSH_PORTABLE	"p2"
 /* secforge build marker: shown by `-V` only (SSH_RELEASE); the wire banner
  * (SSH_VERSION) is deliberately left unchanged. */
-#define SSH_SECFORGE_BUILD " secforge-20260625"
+#define SSH_SECFORGE_BUILD " secforge-20260817"
 #define SSH_RELEASE	SSH_WINDOWS_VERSION SSH_PORTABLE SSH_WINDOWS_BANNER SSH_SECFORGE_BUILD
