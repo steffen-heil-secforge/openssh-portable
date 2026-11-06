@@ -45,6 +45,8 @@ function Pause-IfElevated { if ($Elevated) { Write-Host ''; Read-Host 'Press Ent
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; Pause-IfElevated; exit 1 }
 function Info($msg) { Write-Host $msg -ForegroundColor Cyan }
 function Ok($msg)   { Write-Host $msg -ForegroundColor Green }
+# Any unexpected (terminating) error: show it and keep the elevated window open.
+trap { Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red; Write-Host $_.InvocationInfo.PositionMessage; Pause-IfElevated; exit 1 }
 
 # ---------------- self-elevate to Administrator (UAC) ----------------
 $principal = New-Object Security.Principal.WindowsPrincipal(
@@ -64,13 +66,16 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administra
     exit
 }
 
-# OpenSSH version actually contained in an ssh.exe (from -V), e.g. "9.5p2".
+# Version actually contained in an ssh.exe (from -V): e.g. "9.5p2" (Microsoft)
+# or "10.5p1-secforge.2+pr859.pr860" (secforge build: incl. its -V marker, so
+# backups of different secforge builds of the same upstream version differ).
 # Captured via cmd so $ErrorActionPreference='Stop' doesn't turn ssh's stderr
 # write into a thrown NativeCommandError. Falls back to FileVersion, then "unknown".
 function Get-SshVersion {
     param([Parameter(Mandatory)][string]$Path)
     try {
         $out = (cmd.exe /c "`"$Path`" -V 2>&1" | Out-String)
+        if ($out -match 'OpenSSH_for_Windows_([0-9]+\.[0-9]+p[0-9]+)[^,]* (secforge[0-9A-Za-z.+-]*),') { return "$($Matches[1])-$($Matches[2])" }
         if ($out -match 'OpenSSH_for_Windows_([0-9]+\.[0-9]+p[0-9]+)') { return $Matches[1] }
         if ($out -match 'OpenSSH[_ ]([0-9][0-9.]*p[0-9]+)')           { return $Matches[1] }
     } catch { }
@@ -88,6 +93,30 @@ function Grant-Write {
     if ($LASTEXITCODE -ne 0) { Fail "takeown failed for $Path (exit $LASTEXITCODE)." }
     icacls "$Path" /grant "*S-1-5-32-544:F" | Out-Null   # *S-1-5-32-544 = BUILTIN\Administrators
     if ($LASTEXITCODE -ne 0) { Fail "icacls grant failed for $Path (exit $LASTEXITCODE)." }
+}
+
+Add-Type -Namespace Win32 -Name Native -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+[DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
+'@
+
+# Copy $Src over $Dst. A running exe (e.g. an open ssh session) cannot be
+# overwritten but can be renamed: move it aside as "<name>.<random>.old" and
+# copy again. The .old file is deleted at the next install or reboot.
+function Install-File {
+    param([Parameter(Mandatory)][string]$Src, [Parameter(Mandatory)][string]$Dst)
+    try {
+        Copy-Item -LiteralPath $Src -Destination $Dst -Force
+    } catch {
+        if (-not (Test-Path -LiteralPath $Dst)) { throw }
+        $old = '{0}.{1}.old' -f $Dst, [guid]::NewGuid().ToString('N').Substring(0, 8)
+        Move-Item -LiteralPath $Dst -Destination $old
+        Copy-Item -LiteralPath $Src -Destination $Dst -Force
+        [Win32.Native]::MoveFileEx($old, $null, 4) | Out-Null   # MOVEFILE_DELAY_UNTIL_REBOOT
+        Info "  $(Split-Path -Leaf $Dst) was in use - old copy moved to $(Split-Path -Leaf $old) (deleted at next install/reboot)"
+    }
 }
 
 # Well-known SIDs (locale independent).
@@ -193,7 +222,8 @@ function Protect-TargetDir {
         $ok = -not $c.PSIsContainer -and
               -not ($c.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -and
               (($ExeNames -contains $c.Name) -or
-               ($c.Name -match '^(.+\.exe)\..+\.bak$' -and $ExeNames -contains $Matches[1]))
+               ($c.Name -match '^(.+\.exe)\..+\.bak$' -and $ExeNames -contains $Matches[1]) -or
+               ($c.Name -match '^(.+\.exe)\.[0-9a-f]{8}\.old$' -and $ExeNames -contains $Matches[1]))
         if (-not $ok) { Fail "-TargetDir $Path contains '$($c.Name)', which this installer did not put there; use a new folder." }
     }
     # Already admin-only, so nobody else can interfere now: still replace its ACL
@@ -221,7 +251,7 @@ if ($Uninstall) {
             $dst  = Join-Path $TargetDir $orig
             if (-not $restored.ContainsKey($orig)) {   # oldest backup wins (Sort above)
                 Grant-Write $dst
-                Copy-Item $b.FullName $dst -Force
+                Install-File $b.FullName $dst
                 Ok "restored $orig"
                 $restored[$orig] = $true
             }
@@ -280,12 +310,8 @@ if (-not $found) {
 if (-not $found -or $dupes -gt 0) {
     $envKey.SetValue('Path', ($kept -join ';'), $pathKind)
     # tell running programs (Explorer, new consoles) that the environment changed
-    Add-Type -Namespace Win32 -Name Env -MemberDefinition @'
-[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
-'@
     $res = [UIntPtr]::Zero
-    [Win32.Env]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$res) | Out-Null
+    [Win32.Native]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$res) | Out-Null
     if (-not $found) { Ok "Added $TargetDir to system PATH" }
     if ($dupes -gt 0) { Ok "Removed $dupes duplicate PATH entr$(if ($dupes -eq 1) {'y'} else {'ies'}) for $TargetDir" }
 } else {
@@ -319,6 +345,11 @@ if ($oldVer) { Info "Old version (target)      : $oldVer" } else { Info "No exis
 Info "Target directory          : $TargetDir"
 Write-Host ''
 
+# leftovers of files that were in use during an earlier install
+foreach ($o in @(Get-ChildItem -LiteralPath $TargetDir -Filter '*.exe.*.old' -Force -ErrorAction SilentlyContinue)) {
+    try { Remove-Item -LiteralPath $o.FullName -Force; Info "removed leftover $($o.Name)" } catch { }
+}
+
 $srcExes = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.exe')
 $nInst = 0
 foreach ($e in $srcExes) {
@@ -334,7 +365,7 @@ foreach ($e in $srcExes) {
             }
         }
     }
-    Copy-Item $e.FullName $dst -Force
+    Install-File $e.FullName $dst
     Ok "install $name"
     $nInst++
 }

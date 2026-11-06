@@ -38,7 +38,11 @@ Install (into %WINDIR%\System32\OpenSSH)
       Windows Update / "Optional Features" cannot overwrite the binaries,
     * copies all exes above into the target. Each existing binary is backed
       up first, named after the version it contains (read from the installed
-      ssh.exe), e.g.  ssh.exe.9.5p2.bak , scp.exe.9.5p2.bak , ...
+      ssh.exe, incl. the secforge build marker), e.g.
+      ssh.exe.10.5p1-secforge+pr859.pr860.bak - only when the version differs.
+    * replaces files that are in use (e.g. an open ssh session): the running
+      file is renamed to <name>.<random>.old and deleted at the next install
+      or reboot - no need to close sessions first.
 
 Install elsewhere
 -----------------
