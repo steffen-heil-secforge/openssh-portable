@@ -20,8 +20,9 @@
 
 .PARAMETER TargetDir
     Install folder. Default: inbox OpenSSH (%WINDIR%\System32\OpenSSH).
-    A custom folder must be outside %WINDIR%, empty or contain only a previous
-    install, and sit in a parent that only administrators can write to (e.g.
+    A custom folder must be outside %WINDIR% and either not exist yet (it is
+    created) or be admin-only already and contain only a previous install of
+    these files; it must sit in a parent that only administrators can write to (e.g.
     "$env:ProgramFiles\OpenSSH-secforge"); no path component may be a junction.
     Its ACL is reset so that only SYSTEM and Administrators can write to it
     (it is put on the system PATH).
@@ -159,41 +160,41 @@ function Assert-DedicatedTarget {
 }
 
 # Owner Administrators; no inheritance; SYSTEM + Administrators full control,
-# Users read/execute. Applied to the folder itself only (not recursive).
+# Users read/execute. Applied to the folder itself only (/L: never a link target).
 function Lock-Folder {
     param([Parameter(Mandatory)][string]$Path)
-    icacls "$Path" /setowner "*$SidAdmins" | Out-Null
+    icacls "$Path" /setowner "*$SidAdmins" /L | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "icacls setowner failed for $Path (exit $LASTEXITCODE)." }
-    icacls "$Path" /reset | Out-Null      # drop explicit ACEs (e.g. granted to the creating user)
-    if ($LASTEXITCODE -ne 0) { Fail "icacls reset failed for $Path (exit $LASTEXITCODE)." }
-    icacls "$Path" /inheritance:r /grant:r "*$($SidSystem):(OI)(CI)F" "*$($SidAdmins):(OI)(CI)F" "*$($SidUsers):(OI)(CI)RX" | Out-Null
+    icacls "$Path" /inheritance:r /grant:r "*$($SidSystem):(OI)(CI)F" "*$($SidAdmins):(OI)(CI)F" "*$($SidUsers):(OI)(CI)RX" /L | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "icacls lock-down failed for $Path (exit $LASTEXITCODE)." }
 }
 
-# Prepare a custom TargetDir. Order matters: ancestors first (then nobody but
-# admins can replace TargetDir), then lock the folder itself (then nobody but
-# admins can add/replace entries in it), and only then inspect its contents.
+# Prepare a custom TargetDir. The ancestor check guarantees that only admins
+# can create or replace TargetDir. A missing folder is created and locked
+# before anything is put into it. An existing folder is never taken over: it
+# must already be admin-only (else someone else may hold handles or have
+# planted content) and may contain only what this installer puts there.
 function Protect-TargetDir {
-    param([Parameter(Mandatory)][string]$Path)
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string[]]$ExeNames)
     Assert-DedicatedTarget $Path
     Assert-SafeAncestors $Path
-    if (Test-Path -LiteralPath $Path) {
-        if (Test-ReparsePoint $Path) { Fail "-TargetDir $Path is a junction/symbolic link; refusing." }
-    } else {
+    if (-not (Test-Path -LiteralPath $Path)) {
         New-Item -ItemType Directory -Path $Path | Out-Null
         Info "Created target directory: $Path"
+        Lock-Folder $Path
+        Ok "Restricted write access on $Path to SYSTEM and Administrators"
+        return
     }
-    Lock-Folder $Path
-    if (Test-ReparsePoint $Path) { Fail "-TargetDir $Path turned into a junction/symbolic link; refusing." }
+    if (Test-ReparsePoint $Path) { Fail "-TargetDir $Path is a junction/symbolic link; refusing." }
+    if (-not (Test-TrustedOnly $Path $MaskWrite)) {
+        Fail "Existing -TargetDir $Path is writable by non-administrators (or not owned by one); delete it or choose a new folder - the installer creates and locks it."
+    }
     foreach ($c in @(Get-ChildItem -LiteralPath $Path -Force)) {
-        if ($c.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { Fail "$($c.FullName) is a link/reparse point; refusing." }
-        if ($c.PSIsContainer -or ($c.Name -notmatch '\.exe$' -and $c.Name -notmatch '\.exe\..+\.bak$')) {
-            Fail "-TargetDir $Path contains other files/folders (e.g. '$($c.Name)'); use an empty, dedicated folder."
-        }
-        icacls "$($c.FullName)" /setowner "*$SidAdmins" /L | Out-Null
-        if ($LASTEXITCODE -ne 0) { Fail "icacls setowner failed for $($c.FullName) (exit $LASTEXITCODE)." }
-        icacls "$($c.FullName)" /reset /L | Out-Null   # re-inherit the locked folder ACL
-        if ($LASTEXITCODE -ne 0) { Fail "icacls reset failed for $($c.FullName) (exit $LASTEXITCODE)." }
+        $ok = -not $c.PSIsContainer -and
+              -not ($c.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -and
+              (($ExeNames -contains $c.Name) -or
+               ($c.Name -match '^(.+\.exe)\..+\.bak$' -and $ExeNames -contains $Matches[1]))
+        if (-not $ok) { Fail "-TargetDir $Path contains '$($c.Name)', which this installer did not put there; use a new folder." }
     }
 }
 
@@ -226,16 +227,15 @@ if ($Uninstall) {
 # A custom folder would inherit e.g. C:\'s ACL, where every user may modify
 # subfolders - lock it down before it goes on the system PATH.
 if ($IsDefault) {
+    Assert-SafeAncestors $TargetDir
     if (-not (Test-Path -LiteralPath $TargetDir)) {
         New-Item -ItemType Directory -Path $TargetDir | Out-Null
         Info "Created target directory: $TargetDir"
         icacls "$TargetDir" /setowner "*$SidAdmins" | Out-Null   # owner must not be the user account
         if ($LASTEXITCODE -ne 0) { Fail "icacls setowner failed for $TargetDir (exit $LASTEXITCODE)." }
     }
-    Assert-SafeAncestors $TargetDir
 } else {
-    Protect-TargetDir $TargetDir
-    Ok "Restricted write access on $TargetDir to SYSTEM and Administrators"
+    Protect-TargetDir $TargetDir @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.exe' | ForEach-Object Name)
 }
 if ((Test-ReparsePoint $TargetDir) -or -not (Test-TrustedOnly $TargetDir $MaskWrite)) {
     Fail "$TargetDir is writable by non-administrators (or not owned by an administrator); refusing to install it on the system PATH."

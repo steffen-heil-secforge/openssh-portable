@@ -47,9 +47,10 @@ Install elsewhere
     * its parent is writable only by administrators (e.g. C:\Program Files;
       NOT C:\ or C:\Tools, where every user may create/rename folders),
     * no path component is a junction / symbolic link,
-    * it is empty or contains only a previous install (*.exe, *.exe.*.bak).
-  Its ACL is then reset to: owner Administrators, SYSTEM + Administrators
-  full control, Users read/execute.
+    * it does not exist yet (the installer creates it with: owner
+      Administrators, SYSTEM + Administrators full control, Users
+      read/execute), or it already is admin-only and contains nothing but a
+      previous install of these files (*.exe and their *.bak backups).
 
 Revert
 ------
