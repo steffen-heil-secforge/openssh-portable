@@ -252,20 +252,46 @@ if ((Test-ReparsePoint $TargetDir) -or -not (Test-TrustedOnly $TargetDir $MaskWr
     Fail "$TargetDir is writable by non-administrators (or not owned by an administrator); refusing to install it on the system PATH."
 }
 
-# ---------------- ensure TargetDir is in the system PATH ----------------
-$regPath  = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
-$sysPath  = (Get-ItemProperty -LiteralPath $regPath -Name Path).Path
-$entries  = $sysPath -split ';' | Where-Object { $_ -ne '' }
-$already  = $entries | Where-Object { $_ -eq $TargetDir -or $_ -eq $TargetDir.TrimEnd('\') }
-if (-not $already) {
-    $newPath = ($entries + $TargetDir) -join ';'
-    Set-ItemProperty -LiteralPath $regPath -Name Path -Value $newPath
-    # broadcast WM_SETTINGCHANGE so the running session picks it up without a reboot
-    [System.Environment]::SetEnvironmentVariable('Path', $newPath, 'Machine')
-    Ok "Added $TargetDir to system PATH"
+# ---------------- ensure TargetDir is in the system PATH (exactly once) ----------------
+# Work on the raw registry value (keeps %SystemRoot% etc. unexpanded) and keep
+# its value kind (normally REG_EXPAND_SZ); [Environment]::SetEnvironmentVariable
+# would write it back expanded as REG_SZ. Entries are compared expanded, without
+# quotes/trailing '\' and case-insensitively; other entries stay untouched.
+function ConvertTo-PathKey([string]$Entry) {
+    return [Environment]::ExpandEnvironmentVariables($Entry).Trim().Trim('"').TrimEnd('\').ToLowerInvariant()
+}
+$envKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true)
+if (-not $envKey) { Fail 'Cannot open the system environment registry key.' }
+$rawPath  = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+$pathKind = if ($envKey.GetValueNames() -contains 'Path') { $envKey.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
+$want = ConvertTo-PathKey $TargetDir
+$kept = New-Object System.Collections.Generic.List[string]
+$found = $false; $dupes = 0
+foreach ($e in ($rawPath -split ';')) {
+    if ($e.Trim() -ne '' -and (ConvertTo-PathKey $e) -eq $want) {
+        if ($found) { $dupes++; continue }
+        $found = $true
+    }
+    $kept.Add($e)
+}
+if (-not $found) {
+    if ($kept.Count -gt 0 -and $kept[$kept.Count - 1] -eq '') { $kept[$kept.Count - 1] = $TargetDir } else { $kept.Add($TargetDir) }
+}
+if (-not $found -or $dupes -gt 0) {
+    $envKey.SetValue('Path', ($kept -join ';'), $pathKind)
+    # tell running programs (Explorer, new consoles) that the environment changed
+    Add-Type -Namespace Win32 -Name Env -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@
+    $res = [UIntPtr]::Zero
+    [Win32.Env]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$res) | Out-Null
+    if (-not $found) { Ok "Added $TargetDir to system PATH" }
+    if ($dupes -gt 0) { Ok "Removed $dupes duplicate PATH entr$(if ($dupes -eq 1) {'y'} else {'ies'}) for $TargetDir" }
 } else {
     Info "PATH already contains $TargetDir"
 }
+$envKey.Close()
 
 # ---------------- remove Windows Capability (prevents Windows Update overwrite) ----------------
 foreach ($capName in @('OpenSSH.Client~~~~0.0.1.0')) {
