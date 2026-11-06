@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
     Installs the locally-built static OpenSSH_for_Windows 10.0p2 client suite
-    (adds "Match localnetwork" support; statically linked - no libcrypto.dll)
-    over an existing OpenSSH install, backing up the originals.
+    (adds "Match localnetwork" support; statically linked - no libcrypto.dll).
 
 .DESCRIPTION
-    Replaces every *.exe sitting next to this script (ssh, scp, sftp, ssh-add,
-    ssh-agent, ssh-keygen, ssh-keyscan, ssh-pkcs11-helper, ssh-sk-helper) in
-    -TargetDir (default: inbox OpenSSH at %WINDIR%\System32\OpenSSH), but only
-    for files that already exist there. Each original is backed up to a file
-    named after the version it actually contains, e.g. "scp.exe.9.5p2.bak"
-    (the version is read from the existing ssh.exe, since the suite is uniform).
+    Copies every *.exe sitting next to this script (ssh, scp, sftp, ssh-add,
+    ssh-agent, ssh-keygen, ssh-keyscan, ssh-pkcs11-helper, ssh-sk-helper) into
+    -TargetDir (default: %WINDIR%\System32\OpenSSH), creating the directory if
+    needed. Any pre-existing exe is backed up as "<name>.<oldver>.bak" first.
+
+    Also removes the "OpenSSH.Client" Windows Capability (if present) so
+    Windows Update cannot silently overwrite the binaries.
 
     Inbox files are owned by TrustedInstaller, so admin rights are required -
     this script SELF-ELEVATES (UAC) automatically.
@@ -83,7 +83,39 @@ function Grant-Write {
     if ($LASTEXITCODE -ne 0) { Fail "icacls grant failed for $Path (exit $LASTEXITCODE)." }
 }
 
-if (-not (Test-Path -LiteralPath $TargetDir)) { Fail "Target directory not found: $TargetDir" }
+if (-not (Test-Path -LiteralPath $TargetDir)) {
+    New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
+    Info "Created target directory: $TargetDir"
+}
+
+# ---------------- ensure TargetDir is in the system PATH ----------------
+$regPath  = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+$sysPath  = (Get-ItemProperty -LiteralPath $regPath -Name Path).Path
+$entries  = $sysPath -split ';' | Where-Object { $_ -ne '' }
+$already  = $entries | Where-Object { $_ -eq $TargetDir -or $_ -eq $TargetDir.TrimEnd('\') }
+if (-not $already) {
+    $newPath = ($entries + $TargetDir) -join ';'
+    Set-ItemProperty -LiteralPath $regPath -Name Path -Value $newPath
+    # broadcast WM_SETTINGCHANGE so the running session picks it up without a reboot
+    [System.Environment]::SetEnvironmentVariable('Path', $newPath, 'Machine')
+    Ok "Added $TargetDir to system PATH"
+} else {
+    Info "PATH already contains $TargetDir"
+}
+
+# ---------------- remove Windows Capability (prevents Windows Update overwrite) ----------------
+foreach ($capName in @('OpenSSH.Client~~~~0.0.1.0')) {
+    try {
+        $cap = Get-WindowsCapability -Online -Name $capName -ErrorAction SilentlyContinue
+        if ($cap -and $cap.State -eq 'Installed') {
+            Info "Removing Windows Capability: $capName ..."
+            Remove-WindowsCapability -Online -Name $capName | Out-Null
+            Ok "Removed $capName"
+        }
+    } catch {
+        Info "Could not remove capability $capName (may not exist): $($_.Exception.Message)"
+    }
+}
 
 # ---------------- Uninstall ----------------
 if ($Uninstall) {
@@ -113,27 +145,27 @@ if ($Uninstall) {
 $srcSsh = Join-Path $PSScriptRoot 'ssh.exe'
 $dstSsh = Join-Path $TargetDir 'ssh.exe'
 if (-not (Test-Path -LiteralPath $srcSsh)) { Fail "Source ssh.exe not found next to this script: $srcSsh" }
-if (-not (Test-Path -LiteralPath $dstSsh)) { Fail "No existing ssh.exe at $dstSsh (is OpenSSH installed there?)." }
 
 $newVer = Get-SshVersion $srcSsh
-$oldVer = Get-SshVersion $dstSsh
+$oldVer = if (Test-Path -LiteralPath $dstSsh) { Get-SshVersion $dstSsh } else { $null }
 Info "New version (these files) : $newVer"
-Info "Old version (target)      : $oldVer"
+if ($oldVer) { Info "Old version (target)      : $oldVer" } else { Info "No existing binaries in target (fresh install)" }
 Info "Target directory          : $TargetDir"
 Write-Host ''
 
-$srcExes  = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.exe')
-$nInst = 0; $nSkip = 0
+$srcExes = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.exe')
+$nInst = 0
 foreach ($e in $srcExes) {
     $name = $e.Name
     $dst  = Join-Path $TargetDir $name
-    if (-not (Test-Path -LiteralPath $dst)) { Info "skip   $name  (not present in target)"; $nSkip++; continue }
-    Grant-Write $dst
-    if ($oldVer -ne $newVer) {
-        $bak = Join-Path $TargetDir ("$name.$oldVer.bak")
-        if (-not (Test-Path -LiteralPath $bak)) {
-            Copy-Item $dst $bak -Force
-            if (-not (Test-Path -LiteralPath $bak)) { Fail "Backup copy failed: $bak" }
+    if (Test-Path -LiteralPath $dst) {
+        Grant-Write $dst
+        if ($oldVer -and $oldVer -ne $newVer) {
+            $bak = Join-Path $TargetDir ("$name.$oldVer.bak")
+            if (-not (Test-Path -LiteralPath $bak)) {
+                Copy-Item $dst $bak -Force
+                if (-not (Test-Path -LiteralPath $bak)) { Fail "Backup copy failed: $bak" }
+            }
         }
     }
     Copy-Item $e.FullName $dst -Force
@@ -146,8 +178,7 @@ if ($check -ne $newVer) { Fail "Verification failed: ssh.exe reads '$check', exp
 
 Write-Host ''
 Ok "SUCCESS - installed $nInst binaries as OpenSSH_for_Windows $newVer (static, no libcrypto.dll)."
-if ($nSkip -gt 0) { Info "($nSkip source exe(s) were not present in the target and were skipped.)" }
-if ($oldVer -ne $newVer) { Info "Originals backed up as <name>.$oldVer.bak in $TargetDir" }
+if ($oldVer -and $oldVer -ne $newVer) { Info "Originals backed up as <name>.$oldVer.bak in $TargetDir" }
 Info "To revert: re-run with -Uninstall"
 Pause-IfElevated
 exit 0

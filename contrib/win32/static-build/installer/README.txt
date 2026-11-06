@@ -16,8 +16,8 @@ Contents
 
   Install-OpenSSH.ps1  Installer/uninstaller (replaces all of the above).
 
-Install (replaces matching binaries in the inbox %WINDIR%\System32\OpenSSH)
------------------------------------------------------------------------
+Install (into %WINDIR%\System32\OpenSSH)
+-----------------------------------------
   Right-click  Install-OpenSSH.ps1  ->  "Run with PowerShell".
   The script self-elevates (you'll get a UAC prompt) - no need to open an
   admin console yourself.
@@ -25,12 +25,14 @@ Install (replaces matching binaries in the inbox %WINDIR%\System32\OpenSSH)
   NOTE: double-clicking a .ps1 only OPENS it in the editor (a Windows
   default); use "Run with PowerShell" (or run it from a console) to launch.
 
-  Each existing binary is backed up first, named after the version it
-  contains (read from the installed ssh.exe), e.g.  ssh.exe.9.5p2.bak ,
-  scp.exe.9.5p2.bak , ...
-
-  Only files that already exist in the target are replaced; nothing new
-  is added there.
+  The installer:
+    * creates the target directory if it does not exist (fresh install),
+    * adds the target directory to the system PATH if it is missing,
+    * removes the "OpenSSH.Client" Windows Capability (if installed), so
+      Windows Update / "Optional Features" cannot overwrite the binaries,
+    * copies all exes above into the target. Each existing binary is backed
+      up first, named after the version it contains (read from the installed
+      ssh.exe), e.g.  ssh.exe.9.5p2.bak , scp.exe.9.5p2.bak , ...
 
 Install elsewhere
 -----------------
@@ -39,11 +41,13 @@ Install elsewhere
 Revert
 ------
   .\Install-OpenSSH.ps1 -Uninstall
-  (restores the original versioned backup and removes it)
+  (restores the original versioned backup and removes it; does NOT re-add
+  the "OpenSSH.Client" Windows Capability or remove the PATH entry - re-add
+  the capability via "Optional Features" if you want the inbox client back)
 
 Quick test without installing (per-shell, no admin)
 ---------------------------------------------------
-  $env:PATH = "L:\Development\tools\OpenSSH_for_windows_10.0p2;$env:PATH"
+  $env:PATH = "<folder containing this README>;$env:PATH"
   ssh -V
   # Match localnetwork demo:
   "Match localnetwork 127.0.0.0/8`n    Compression yes" | Set-Content cfg.txt
@@ -51,6 +55,6 @@ Quick test without installing (per-shell, no admin)
 
 Notes
 -----
-  * Windows Update / "Optional Features" repair may restore the inbox 9.5p2
-    client; just re-run the installer if that happens.
+  * Should the inbox client come back anyway (e.g. a feature update re-adds
+    the capability), just re-run the installer.
   * This is a locally-built binary, not a signed Microsoft release.
