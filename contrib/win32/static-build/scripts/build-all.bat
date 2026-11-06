@@ -13,7 +13,7 @@ del "%ROOT%\contrib\win32\win32compat\inc\crtheaders.h" 2>nul
 powershell.exe -ExecutionPolicy Bypass -File "%SLN%\config.ps1" -Config_h_vs "%SLN%\config.h.vs" -Config_h "%ROOT%\config.h" -VCIncludePath "%INCLUDE%" -OutCRTHeader "%ROOT%\contrib\win32\win32compat\inc\crtheaders.h"
 
 set FAILED=
-for %%P in (openbsd_compat.vcxproj win32iocompat.vcxproj libssh.vcxproj ssh.vcxproj scp.vcxproj sftp.vcxproj ssh-add.vcxproj ssh-agent.vcxproj keygen.vcxproj ssh-keyscan.vcxproj ssh-pkcs11-helper.vcxproj ssh-sk-helper.vcxproj) do (
+for %%P in (openbsd_compat.vcxproj win32iocompat.vcxproj libssh.vcxproj ssh.vcxproj scp.vcxproj sftp.vcxproj ssh-add.vcxproj keygen.vcxproj ssh-keyscan.vcxproj ssh-pkcs11-helper.vcxproj ssh-sk-helper.vcxproj) do (
     echo === building %%P ===
     msbuild %%P %COMMON%
     if !ERRORLEVEL! NEQ 0 ( echo   *** FAILED: %%P ^(exit !ERRORLEVEL!^) & set FAILED=!FAILED! %%P )

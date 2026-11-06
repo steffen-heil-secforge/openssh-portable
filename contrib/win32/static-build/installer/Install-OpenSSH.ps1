@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Copies every *.exe sitting next to this script (ssh, scp, sftp, ssh-add,
-    ssh-agent, ssh-keygen, ssh-keyscan, ssh-pkcs11-helper, ssh-sk-helper) into
+    ssh-keygen, ssh-keyscan, ssh-pkcs11-helper, ssh-sk-helper) into
     -TargetDir (default: %WINDIR%\System32\OpenSSH), creating the directory if
     needed. Any pre-existing exe is backed up as "<name>.<oldver>.bak" first.
 

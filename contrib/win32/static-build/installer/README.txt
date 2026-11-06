@@ -6,8 +6,11 @@ Contents
   The full x64 client suite (version: see  ssh -V ), LibreSSL,
   all STATICALLY linked - NO libcrypto.dll required:
 
-    ssh.exe  scp.exe  sftp.exe  ssh-add.exe  ssh-agent.exe
-    ssh-keygen.exe  ssh-keyscan.exe  ssh-pkcs11-helper.exe  ssh-sk-helper.exe
+    ssh.exe  scp.exe  sftp.exe  ssh-add.exe  ssh-keygen.exe
+    ssh-keyscan.exe  ssh-pkcs11-helper.exe  ssh-sk-helper.exe
+
+  ssh-agent is NOT part of this release (the installer also removes the
+  Microsoft OpenSSH.Client capability, which includes the ssh-agent service).
 
   Changes over the official build (pending upstream PRs, see ssh -V suffix):
     * pr859: ssh_config "Match localnetwork" works on Windows (getifaddrs()

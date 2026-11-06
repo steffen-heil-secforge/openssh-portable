@@ -33,7 +33,12 @@ Tag `v<upstream>-secforge[.<n>]+<prs>`, e.g.:
   `v<upstream>-`), e.g. `" secforge.2+pr859.pr860"`; `ssh -V` then shows
   `OpenSSH_for_Windows_10.5p1 Win32-OpenSSH-GitHub secforge.2+pr859.pr860, ...`.
   The wire banner (`SSH_VERSION`) is never changed.
-- Zip: `OpenSSH_for_Windows_<tag without v>-static-x64.zip`.
+- Zip: `OpenSSH_for_Windows_<tag without v>-static-x64.zip`, containing
+  exactly: `ssh.exe scp.exe sftp.exe ssh-add.exe ssh-keygen.exe
+  ssh-keyscan.exe ssh-pkcs11-helper.exe ssh-sk-helper.exe` +
+  `Install-OpenSSH.ps1` + `README.txt`. **No `ssh-agent.exe`** - the agent is
+  not part of the release (the installer copies every `*.exe` next to it, so
+  do not put one there).
 
 ## What diverges from the feature branch (and why)
 
@@ -68,7 +73,7 @@ scripts) so the `.vcxproj` files stay unmodified.
 2. **`vcpkg-install.bat`** — manifest install of `zlib`/`libcbor`/`libressl`/`libfido2`
    for triplet `x64-custom` (now fully static) into `…\vcpkg_installed\x64-custom`.
 3. **`build-all.bat`** — generates `config.h`/`crtheaders.h` (via `config.ps1`)
-   and builds `openbsd_compat`, `posix_compat`, `libssh`, then all 9 client exes.
+   and builds `openbsd_compat`, `posix_compat`, `libssh`, then the 8 client exes.
 4. **`build-3.bat`** — rebuilds `scp`/`sftp`/`keygen` with `_CL_=/wd4703 /wd4701`
    (see gotchas).
 5. **`build-verify.bat`** — builds + runs `unittest-win32compat` (getifaddrs tests).
