@@ -84,7 +84,7 @@ function Get-SshVersion {
 # take ownership + grant Administrators full control (SID = locale independent)
 function Grant-Write {
     param([Parameter(Mandatory)][string]$Path)
-    takeown /f "$Path" | Out-Null
+    takeown /f "$Path" /a | Out-Null   # /a: owner = Administrators group, not the user account
     if ($LASTEXITCODE -ne 0) { Fail "takeown failed for $Path (exit $LASTEXITCODE)." }
     icacls "$Path" /grant "*S-1-5-32-544:F" | Out-Null   # *S-1-5-32-544 = BUILTIN\Administrators
     if ($LASTEXITCODE -ne 0) { Fail "icacls grant failed for $Path (exit $LASTEXITCODE)." }
@@ -196,6 +196,17 @@ function Protect-TargetDir {
                ($c.Name -match '^(.+\.exe)\..+\.bak$' -and $ExeNames -contains $Matches[1]))
         if (-not $ok) { Fail "-TargetDir $Path contains '$($c.Name)', which this installer did not put there; use a new folder." }
     }
+    # Already admin-only, so nobody else can interfere now: still replace its ACL
+    # (it may carry inheritable write grants for new files) and make existing
+    # files inherit it again (they may carry their own write grants).
+    Lock-Folder $Path
+    foreach ($c in @(Get-ChildItem -LiteralPath $Path -Force)) {
+        icacls "$($c.FullName)" /setowner "*$SidAdmins" /L | Out-Null
+        if ($LASTEXITCODE -ne 0) { Fail "icacls setowner failed for $($c.FullName) (exit $LASTEXITCODE)." }
+        icacls "$($c.FullName)" /reset /L | Out-Null
+        if ($LASTEXITCODE -ne 0) { Fail "icacls reset failed for $($c.FullName) (exit $LASTEXITCODE)." }
+    }
+    Ok "Restricted write access on $Path to SYSTEM and Administrators"
 }
 
 # ---------------- Uninstall ----------------
@@ -300,6 +311,14 @@ foreach ($e in $srcExes) {
     Copy-Item $e.FullName $dst -Force
     Ok "install $name"
     $nInst++
+}
+
+# Every installed binary must be admin-only (it is run via the system PATH).
+foreach ($e in $srcExes) {
+    $dst = Join-Path $TargetDir $e.Name
+    icacls "$dst" /setowner "*$SidAdmins" /L | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "icacls setowner failed for $dst (exit $LASTEXITCODE)." }
+    if (-not (Test-TrustedOnly $dst $MaskWrite)) { Fail "$dst is writable by non-administrators after install - check the ACL of $TargetDir." }
 }
 
 $check = Get-SshVersion $dstSsh
