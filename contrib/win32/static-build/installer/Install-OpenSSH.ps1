@@ -19,10 +19,14 @@
     (Double-clicking a .ps1 only opens it in the editor - a Windows default.)
 
 .PARAMETER TargetDir
-    Folder whose binaries to replace. Default: inbox OpenSSH.
+    Install folder. Default: inbox OpenSSH (%WINDIR%\System32\OpenSSH).
+    A custom folder must be outside %WINDIR% and empty or contain only a
+    previous install; its ACL is reset so that only SYSTEM and Administrators
+    can write to it (it is put on the system PATH).
 
 .PARAMETER Uninstall
     Restore every versioned backup (*.exe.*.bak) and remove the backups.
+    Does not touch the system PATH or the OpenSSH.Client capability.
 #>
 [CmdletBinding()]
 param(
@@ -83,9 +87,114 @@ function Grant-Write {
     if ($LASTEXITCODE -ne 0) { Fail "icacls grant failed for $Path (exit $LASTEXITCODE)." }
 }
 
+# Well-known SIDs (locale independent).
+$SidSystem   = 'S-1-5-18'
+$SidAdmins   = 'S-1-5-32-544'
+$SidUsers    = 'S-1-5-32-545'
+$SidTrustedI = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'   # NT SERVICE\TrustedInstaller
+$TrustedSids = @($SidSystem, $SidAdmins, $SidTrustedI)
+
+$DefaultDir = Join-Path $env:WINDIR 'System32\OpenSSH'
+$TargetDir  = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($TargetDir).TrimEnd('\')
+$IsDefault  = $TargetDir -ieq [System.IO.Path]::GetFullPath($DefaultDir).TrimEnd('\')
+
+# True if only SYSTEM / Administrators / TrustedInstaller own the directory and
+# hold any write-type right on it. Anything else would let a non-admin plant
+# binaries in a directory on the system PATH (privilege escalation).
+function Test-AdminOnlyWritable {
+    param([Parameter(Mandatory)][string]$Path)
+    $acl   = Get-Acl -LiteralPath $Path
+    $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+    if ($TrustedSids -notcontains $owner) { return $false }
+    # WriteData, AppendData, WriteExtendedAttributes, DeleteSubdirectoriesAndFiles,
+    # WriteAttributes, Delete, ChangePermissions, TakeOwnership, GENERIC_ALL, GENERIC_WRITE
+    $writeMask = 0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
+    foreach ($r in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+        if ($r.AccessControlType -ne 'Allow') { continue }
+        if ($r.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
+        if (([int]$r.FileSystemRights -band $writeMask) -eq 0) { continue }
+        if ($TrustedSids -notcontains $r.IdentityReference.Value) { return $false }
+    }
+    return $true
+}
+
+# A custom TargetDir must be a dedicated folder: we take it over and replace its
+# ACL, so refuse anything that could be a shared/system directory.
+function Assert-DedicatedTarget {
+    param([Parameter(Mandatory)][string]$Path)
+    $winDir = [System.IO.Path]::GetFullPath($env:WINDIR).TrimEnd('\')
+    if ($Path -ieq $winDir -or $Path.StartsWith("$winDir\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        Fail "Custom -TargetDir must not be inside $winDir (use the default or a dedicated folder elsewhere)."
+    }
+    if ([System.IO.Path]::GetPathRoot($Path).TrimEnd('\') -ieq $Path) { Fail "-TargetDir must not be a drive root: $Path" }
+    if (Test-Path -LiteralPath $Path) {
+        $foreign = @(Get-ChildItem -LiteralPath $Path -Force |
+                     Where-Object { $_.PSIsContainer -or ($_.Name -notmatch '\.exe$' -and $_.Name -notmatch '\.exe\..+\.bak$') })
+        if ($foreign.Count -gt 0) {
+            Fail "-TargetDir $Path contains other files/folders (e.g. '$($foreign[0].Name)'); use an empty, dedicated folder."
+        }
+    }
+}
+
+# Owner Administrators; no inheritance; SYSTEM + Administrators full control,
+# Users read/execute; existing files re-inherit that ACL.
+function Protect-TargetDir {
+    param([Parameter(Mandatory)][string]$Path)
+    icacls "$Path" /setowner "*$SidAdmins" /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "icacls setowner failed for $Path (exit $LASTEXITCODE)." }
+    icacls "$Path" /reset | Out-Null      # drop explicit ACEs (e.g. granted to the creating user)
+    if ($LASTEXITCODE -ne 0) { Fail "icacls reset failed for $Path (exit $LASTEXITCODE)." }
+    icacls "$Path" /inheritance:r /grant:r "*$($SidSystem):(OI)(CI)F" "*$($SidAdmins):(OI)(CI)F" "*$($SidUsers):(OI)(CI)RX" | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "icacls lock-down failed for $Path (exit $LASTEXITCODE)." }
+    if (@(Get-ChildItem -LiteralPath $Path -Force).Count -gt 0) {
+        icacls (Join-Path $Path '*') /reset /T /C | Out-Null
+        if ($LASTEXITCODE -ne 0) { Fail "icacls reset of existing files in $Path failed (exit $LASTEXITCODE)." }
+    }
+}
+
+# ---------------- Uninstall ----------------
+if ($Uninstall) {
+    $baks = @(Get-ChildItem -LiteralPath $TargetDir -Filter '*.exe.*.bak' -ErrorAction SilentlyContinue |
+              Sort-Object CreationTimeUtc)
+    if ($baks.Count -eq 0) { Fail "No backups (*.exe.*.bak) found in $TargetDir." }
+    $restored = @{}
+    foreach ($b in $baks) {
+        if ($b.Name -match '^(.+\.exe)\..+\.bak$') {
+            $orig = $Matches[1]
+            $dst  = Join-Path $TargetDir $orig
+            if (-not $restored.ContainsKey($orig)) {   # oldest backup wins (Sort above)
+                Grant-Write $dst
+                Copy-Item $b.FullName $dst -Force
+                Ok "restored $orig"
+                $restored[$orig] = $true
+            }
+            Remove-Item $b.FullName -Force
+        }
+    }
+    Ok "Uninstall complete. ssh.exe is now $(Get-SshVersion (Join-Path $TargetDir 'ssh.exe'))."
+    Pause-IfElevated
+    exit 0
+}
+
+# ---------------- Install: prepare target directory ----------------
+if (-not $IsDefault) { Assert-DedicatedTarget $TargetDir }
 if (-not (Test-Path -LiteralPath $TargetDir)) {
     New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
     Info "Created target directory: $TargetDir"
+    if ($IsDefault) {   # inherits System32's ACL; only make sure the owner is not the user account
+        icacls "$TargetDir" /setowner "*$SidAdmins" | Out-Null
+        if ($LASTEXITCODE -ne 0) { Fail "icacls setowner failed for $TargetDir (exit $LASTEXITCODE)." }
+    }
+}
+# The default inbox folder inherits System32's ACL (TrustedInstaller) - leave it.
+# A custom folder would inherit e.g. C:\'s ACL, where every user may modify
+# subfolders - lock it down before it goes on the system PATH.
+if (-not $IsDefault) {
+    Protect-TargetDir $TargetDir
+    Ok "Restricted write access on $TargetDir to SYSTEM and Administrators"
+}
+if (-not (Test-AdminOnlyWritable $TargetDir)) {
+    Fail "$TargetDir is writable by non-administrators (or not owned by an administrator); refusing to install it on the system PATH."
 }
 
 # ---------------- ensure TargetDir is in the system PATH ----------------
@@ -115,30 +224,6 @@ foreach ($capName in @('OpenSSH.Client~~~~0.0.1.0')) {
     } catch {
         Info "Could not remove capability $capName (may not exist): $($_.Exception.Message)"
     }
-}
-
-# ---------------- Uninstall ----------------
-if ($Uninstall) {
-    $baks = @(Get-ChildItem -LiteralPath $TargetDir -Filter '*.exe.*.bak' -ErrorAction SilentlyContinue |
-              Sort-Object CreationTimeUtc)
-    if ($baks.Count -eq 0) { Fail "No backups (*.exe.*.bak) found in $TargetDir." }
-    $restored = @{}
-    foreach ($b in $baks) {
-        if ($b.Name -match '^(.+\.exe)\..+\.bak$') {
-            $orig = $Matches[1]
-            $dst  = Join-Path $TargetDir $orig
-            if (-not $restored.ContainsKey($orig)) {   # oldest backup wins (Sort above)
-                Grant-Write $dst
-                Copy-Item $b.FullName $dst -Force
-                Ok "restored $orig"
-                $restored[$orig] = $true
-            }
-            Remove-Item $b.FullName -Force
-        }
-    }
-    Ok "Uninstall complete. ssh.exe is now $(Get-SshVersion (Join-Path $TargetDir 'ssh.exe'))."
-    Pause-IfElevated
-    exit 0
 }
 
 # ---------------- Install ----------------

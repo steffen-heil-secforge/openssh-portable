@@ -41,6 +41,12 @@ Install elsewhere
 -----------------
   .\Install-OpenSSH.ps1 -TargetDir "C:\Tools\OpenSSH"
 
+  The folder is put on the system PATH, so it must be a dedicated folder:
+  outside %WINDIR%, not a drive root, and empty or containing only a previous
+  install (*.exe / *.exe.*.bak). Its ACL is reset to: owner Administrators,
+  SYSTEM + Administrators full control, Users read/execute - otherwise any
+  user could plant programs there that administrators would then run.
+
 Revert
 ------
   .\Install-OpenSSH.ps1 -Uninstall
