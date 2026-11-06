@@ -53,32 +53,34 @@ scripts) so the `.vcxproj` files stay unmodified.
 
 ## Environment (what these scripts assume)
 
-- Windows host driven from WSL; build done on a real drive (`L:`), not the
-  `\\wsl.localhost` UNC path (MSBuild/CMake choke on UNC cwd).
-- Repo copy at `L:\Development\openssh-portable`.
-- **VS 2018 Build Tools** (`...\Microsoft Visual Studio\18\BuildTools`) — only
-  toolsets `v141` and `v145` are installed (the projects pin `v143`, which is
-  absent → override to `v145`).
-- **VS 2018 Community** present too — used for its bundled **git** (vcpkg
-  manifest mode needs git) and the **ARM64 cross compiler**.
-- vcpkg checkout at `L:\Development\vcpkg` (see below).
+- Windows host driven from WSL; build on a real drive (`L:`), not the
+  `\\wsl.localhost` UNC path (MSBuild/CMake choke on a UNC cwd). Export the
+  branch there, e.g. `git archive secforge-build | tar -x -C <dir>`
+  (`.gitattributes` gives the `.bat`/`.ps1` files CRLF line endings).
+- Any Visual Studio 2026 (18) edition with the x64 C++ tools (v145) and
+  Windows SDK 10.0.26100.0 - located via `vswhere` (Build Tools suffice).
+- git on `PATH` (vcpkg manifest mode resolves the baseline via git).
+- vcpkg **git checkout** (not shallow, recent enough to know the versions in
+  `contrib/win32/openssh/vcpkg.json` `overrides`): `%VCPKG_ROOT%`, else
+  `..\vcpkg` or `..\..\vcpkg` next to the tree. `vcpkg.exe` is bootstrapped
+  on first use.
 
-## Build pipeline (scripts in `scripts/`)
+## Build pipeline (scripts in `scripts/`, run from any cwd)
 
-1. **Provision vcpkg** (one-time): `git clone https://github.com/microsoft/vcpkg`,
-   `git checkout a345bbdc68cdfda65603e24413b21afb28f110fb` (the
-   `builtin-baseline` from `contrib/win32/openssh/vcpkg.json`), keep `.git`
-   (classic mode was removed in the 2026 vcpkg tool → **manifest mode only**,
-   which resolves the baseline via git). Put it on `L:` and `bootstrap-vcpkg.bat`.
-2. **`vcpkg-install.bat`** — manifest install of `zlib`/`libcbor`/`libressl`/`libfido2`
-   for triplet `x64-custom` (now fully static) into `…\vcpkg_installed\x64-custom`.
-3. **`build-all.bat`** — generates `config.h`/`crtheaders.h` (via `config.ps1`)
-   and builds `openbsd_compat`, `posix_compat`, `libssh`, then the 8 client exes.
-4. **`build-3.bat`** — rebuilds `scp`/`sftp`/`keygen` with `_CL_=/wd4703 /wd4701`
-   (see gotchas).
-5. **`build-verify.bat`** — builds + runs `unittest-win32compat` (getifaddrs tests).
-6. **`build-arm64.bat`** — compiles `getifaddrs.c` and `posix_compat.lib` for ARM64.
-7. **`run-getifaddrs-check.bat`**, **`smoke-static.bat`** — runtime/feature checks.
+1. **`vcpkg-install.bat`** - manifest install of `zlib`/`libcbor`/`libressl`/
+   `libfido2` for triplet `x64-custom` (fully static) into
+   `contrib\win32\openssh\vcpkg_installed\x64-custom`; fails if a
+   `libcrypto*.dll` was produced.
+2. **`build-all.bat`** - regenerates `config.h`/`crtheaders.h` (via
+   `config.ps1`) and builds `openbsd_compat`, `posix_compat`, `libssh` and the
+   8 release exes into `bin\x64\Release` (with `_CL_=/wd4703 /wd4701`).
+3. **`package.ps1 -Tag <tag>`** - stages exactly the release files into
+   `release\<zip name>\`, checks them (no third-party DLL imports, `ssh -V`
+   matches the tag, `Match localnetwork` works) and writes the zip + SHA256.
+4. Optional: **`build-verify.bat`** - builds and runs `unittest-win32compat`
+   (needs admin).
+
+`scripts/env.bat` holds the shared setup (paths, `vcvars64`, MSBuild overrides).
 
 ### MSBuild overrides used everywhere
 ```
@@ -92,7 +94,8 @@ scripts) so the `.vcxproj` files stay unmodified.
 
 ## Gotchas (chronological)
 
-- **`v143` toolset missing** → `/p:PlatformToolset=v145`.
+- **`v143` toolset missing** → `/p:PlatformToolset=v145` (upstream moved the
+  x64 projects to v145 in #891; the override is kept for older trees).
 - **`MSB8040` Spectre libs required** → `/p:SpectreMitigation=false` and drop
   `/Qspectre` from the triplet (for the vcpkg ports).
 - **vcpkg classic mode removed** (2026 tool) → manifest mode → needs git +
