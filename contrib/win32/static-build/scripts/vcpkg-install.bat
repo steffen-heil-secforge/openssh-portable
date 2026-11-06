@@ -17,6 +17,6 @@ echo === manifest install in %SLN% (triplet x64-custom) ===
 cd /d "%SLN%"
 "%VCPKG_ROOT%\vcpkg.exe" install --triplet x64-custom --overlay-ports="%SLN%\vcpkg_overlay_ports" --overlay-triplets="%SLN%\vcpkg_triplets" --x-install-root="%SLN%\vcpkg_installed\x64-custom"
 if errorlevel 1 ( echo ERROR: vcpkg install failed & exit /b 1 )
-for %%L in (libcrypto.lib zlib.lib fido2.lib cbor.lib) do if not exist "%VCI%\lib\%%L" ( echo ERROR: %%L missing in %VCI%\lib & exit /b 1 )
+for %%L in (libcrypto.lib zs.lib fido2.lib cbor.lib) do if not exist "%VCI%\lib\%%L" ( echo ERROR: %%L missing in %VCI%\lib & exit /b 1 )
 if exist "%VCI%\bin\libcrypto*.dll" ( echo ERROR: libcrypto DLL built - the triplet is not static & exit /b 1 )
 echo VCPKG_OK

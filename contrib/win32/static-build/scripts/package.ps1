@@ -19,6 +19,7 @@ param([Parameter(Mandatory)][string]$Tag)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
+Set-Location -LiteralPath ([System.IO.Path]::GetTempPath())   # cmd.exe cannot use a UNC cwd (e.g. when started from WSL)
 
 if ($Tag -notmatch '^v(\d+\.\d+p\d+)-(secforge(\.\d+)?\+[0-9a-z]+(\.[0-9a-z]+)*)$') {
     Fail "Tag '$Tag' does not match v<ver>-secforge[.<n>]+<prs> (e.g. v10.5p1-secforge+pr859.pr860)."
