@@ -39,13 +39,17 @@ Install (into %WINDIR%\System32\OpenSSH)
 
 Install elsewhere
 -----------------
-  .\Install-OpenSSH.ps1 -TargetDir "C:\Tools\OpenSSH"
+  .\Install-OpenSSH.ps1 -TargetDir "C:\Program Files\OpenSSH-secforge"
 
-  The folder is put on the system PATH, so it must be a dedicated folder:
-  outside %WINDIR%, not a drive root, and empty or containing only a previous
-  install (*.exe / *.exe.*.bak). Its ACL is reset to: owner Administrators,
-  SYSTEM + Administrators full control, Users read/execute - otherwise any
-  user could plant programs there that administrators would then run.
+  The folder is put on the system PATH, so no non-administrator may be able
+  to change or replace it. The installer refuses the folder unless:
+    * it is outside %WINDIR% and not a drive root,
+    * its parent is writable only by administrators (e.g. C:\Program Files;
+      NOT C:\ or C:\Tools, where every user may create/rename folders),
+    * no path component is a junction / symbolic link,
+    * it is empty or contains only a previous install (*.exe, *.exe.*.bak).
+  Its ACL is then reset to: owner Administrators, SYSTEM + Administrators
+  full control, Users read/execute.
 
 Revert
 ------
