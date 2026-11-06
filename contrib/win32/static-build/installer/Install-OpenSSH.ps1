@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Installs the locally-built static OpenSSH_for_Windows 10.0p2 client suite
+    Installs the locally-built static OpenSSH_for_Windows client suite
     (adds "Match localnetwork" support; statically linked - no libcrypto.dll).
 
 .DESCRIPTION

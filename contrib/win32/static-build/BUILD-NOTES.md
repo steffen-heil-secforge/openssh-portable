@@ -1,13 +1,39 @@
-# Windows static x64 build notes (OpenSSH 10.0p2 + `Match localnetwork`)
+# Windows static x64 build notes (secforge build)
 
-This branch (`build/windows-static-localnetwork`, based on
-`feature/match-localnetwork-windows`) captures everything needed to reproduce
-the **statically linked x64** Windows build published as release
-`v10.0p2-localnetwork` (single-file `ssh.exe`, no `libcrypto.dll`).
+The `secforge-build` branch = upstream `latestw_all` + our pending upstream PRs
++ this build environment. It captures everything needed to reproduce the
+**statically linked x64** Windows client suite published as the
+`v*-secforge*` releases (single-file binaries, no `libcrypto.dll`).
 
-> These are **local build choices, not for upstream.** The clean feature change
-> lives on `feature/match-localnetwork-windows` (PR #1). Microsoft ships
-> LibreSSL as a DLL; this branch links it statically. Keep that separate.
+Pending upstream PRs carried on this branch:
+- PowerShell/openssh-portable#859 - `Match localnetwork` / `getifaddrs()`
+- PowerShell/openssh-portable#860 - report failed async `connect()` via
+  `getsockopt(SO_ERROR)` (IPv6 -> IPv4 fallback)
+
+> These are **local build choices, not for upstream.** The clean feature changes
+> live on their PR branches. Microsoft ships LibreSSL as a DLL; this branch
+> links it statically. Keep that separate.
+
+## Release naming
+
+Tag `v<upstream>-secforge[.<n>]+<prs>`, e.g.:
+
+| Build                                   | Tag                                  |
+|-----------------------------------------|--------------------------------------|
+| first build on a given upstream version | `v10.5p1-secforge+pr859.pr860`       |
+| second build on the same upstream       | `v10.5p1-secforge.2+pr859.pr860`     |
+| third ...                               | `v10.5p1-secforge.3+pr859.pr860`     |
+
+- `<upstream>` = `SSH_WINDOWS_VERSION` + `SSH_PORTABLE` from `version.h`.
+- `.<n>` counts rebuilds on the same upstream version (omitted for the first);
+  it restarts when the upstream version changes.
+- `+<prs>` (SemVer build metadata, dot-separated, one `+` only) lists the
+  carried PRs; drop a PR from it once upstream has merged it.
+- Set `SSH_SECFORGE_BUILD` in `version.h` to the same suffix (without
+  `v<upstream>-`), e.g. `" secforge.2+pr859.pr860"`; `ssh -V` then shows
+  `OpenSSH_for_Windows_10.5p1 Win32-OpenSSH-GitHub secforge.2+pr859.pr860, ...`.
+  The wire banner (`SSH_VERSION`) is never changed.
+- Zip: `OpenSSH_for_Windows_<tag without v>-static-x64.zip`.
 
 ## What diverges from the feature branch (and why)
 
@@ -79,8 +105,10 @@ scripts) so the `.vcxproj` files stay unmodified.
 
 ## Installer
 
-`installer/Install-OpenSSH.ps1` (+ `README.txt`) — self-elevating installer that
-replaces the matching binaries in `%WINDIR%\System32\OpenSSH`, backing each up
-as `<name>.<version>.bak`. Uses the SID `*S-1-5-32-544` for `icacls` (the name
+`installer/Install-OpenSSH.ps1` (+ `README.txt`, ship both in the zip) —
+self-elevating installer that installs the binaries into
+`%WINDIR%\System32\OpenSSH` (creating it if needed), adds it to the system
+`PATH`, removes the `OpenSSH.Client` Windows Capability, and backs up existing
+binaries as `<name>.<version>.bak`. Uses the SID `*S-1-5-32-544` for `icacls` (the name
 "Administrators" fails on non-English Windows, error 1332). The binaries
-themselves are **not** in git — see the GitHub release `v10.0p2-localnetwork`.
+themselves are **not** in git — see the GitHub releases.

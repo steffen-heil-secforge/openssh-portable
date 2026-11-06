@@ -1,18 +1,21 @@
-OpenSSH_for_Windows 10.0p2 - static client suite (with "Match localnetwork")
-==============================================================================
+OpenSSH_for_Windows - secforge static client suite
+==================================================
 
 Contents
 --------
-  The full x64 client suite, OpenSSH_for_Windows_10.0p2, LibreSSL 4.2.0,
+  The full x64 client suite (version: see  ssh -V ), LibreSSL,
   all STATICALLY linked - NO libcrypto.dll required:
 
     ssh.exe  scp.exe  sftp.exe  ssh-add.exe  ssh-agent.exe
     ssh-keygen.exe  ssh-keyscan.exe  ssh-pkcs11-helper.exe  ssh-sk-helper.exe
 
-  ssh.exe adds support for the ssh_config "Match localnetwork" criterion on
-  Windows (via a getifaddrs() implementation over GetAdaptersAddresses()).
+  Changes over the official build (pending upstream PRs, see ssh -V suffix):
+    * pr859: ssh_config "Match localnetwork" works on Windows (getifaddrs()
+      implementation over GetAdaptersAddresses()).
+    * pr860: a refused connect falls back to the next address (e.g. IPv6 ->
+      IPv4) instead of failing with "Connection to UNKNOWN port -1".
   The other tools are rebuilt at the same version so the suite is uniform
-  (avoids 10.0 ssh.exe spawning a 9.5 ssh-sk-helper/ssh-pkcs11-helper, etc.).
+  (avoids a new ssh.exe spawning an old inbox ssh-sk-helper/ssh-pkcs11-helper).
 
   Install-OpenSSH.ps1  Installer/uninstaller (replaces all of the above).
 
